@@ -1,9 +1,10 @@
 from pathlib import Path
 import os
+from django.core.management.utils import get_random_secret_key
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-your-secret-key-here'
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', get_random_secret_key())
 
 DEBUG = True
 
@@ -38,7 +39,7 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 
-ROOT_URLCONF = 'baat_cheet.urls'
+ROOT_URLCONF = 'urls'
 
 TEMPLATES = [
     {
@@ -56,13 +57,16 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'baat_cheet.wsgi.application'
-ASGI_APPLICATION = 'baat_cheet.asgi.application'
+WSGI_APPLICATION = 'wsgi.application'
+ASGI_APPLICATION = 'asgi.application'
 
 CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer'
-    }
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [("127.0.0.1", 6379)],
+        },
+    },
 }
 
 DATABASES = {
@@ -95,13 +99,3 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# WebSocket settings
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [("127.0.0.1", 6379)],
-        },
-    },
-}
