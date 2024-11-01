@@ -1,8 +1,48 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import { ICE_SERVERS } from '../utils';
+
+const CONNECTION_STATE = {
+  NEW: 'new',
+  CONNECTING: 'connecting',
+  CONNECTED: 'connected',
+  DISCONNECTED: 'disconnected',
+  FAILED: 'failed',
+};
 
 export const useWebRTC = (localStream, onRemoteStream) => {
   const peerConnectionRef = useRef();
+  const [connectionStatus, setConnectionStatus] = useState(CONNECTION_STATE.NEW);
+  const [stats, setStats] = useState(null);
+  const statsIntervalRef = useRef();
+
+  const monitorConnectionStats = useCallback(async (pc) => {
+    if (!pc) return;
+    
+    try {
+      const stats = await pc.getStats();
+      const statsData = {
+        bytesReceived: 0,
+        bytesSent: 0,
+        packetsLost: 0,
+        roundTripTime: 0,
+      };
+
+      stats.forEach(report => {
+        if (report.type === 'inbound-rtp') {
+          statsData.bytesReceived += report.bytesReceived;
+          statsData.packetsLost += report.packetsLost;
+        } else if (report.type === 'outbound-rtp') {
+          statsData.bytesSent += report.bytesSent;
+        } else if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          statsData.roundTripTime = report.currentRoundTripTime;
+        }
+      });
+
+      setStats(statsData);
+    } catch (error) {
+      console.error('Error monitoring stats:', error);
+    }
+  }, []);
 
   const createPeerConnection = useCallback((onIceCandidate) => {
     if (peerConnectionRef.current) {
@@ -10,6 +50,7 @@ export const useWebRTC = (localStream, onRemoteStream) => {
     }
 
     const pc = new RTCPeerConnection(ICE_SERVERS);
+    setConnectionStatus(CONNECTION_STATE.NEW);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -24,7 +65,46 @@ export const useWebRTC = (localStream, onRemoteStream) => {
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log('ICE connection state:', pc.iceConnectionState);
+      switch (pc.iceConnectionState) {
+        case 'checking':
+          setConnectionStatus(CONNECTION_STATE.CONNECTING);
+          break;
+        case 'connected':
+        case 'completed':
+          setConnectionStatus(CONNECTION_STATE.CONNECTED);
+          // Start monitoring stats when connected
+          clearInterval(statsIntervalRef.current);
+          statsIntervalRef.current = setInterval(() => monitorConnectionStats(pc), 1000);
+          break;
+        case 'failed':
+          setConnectionStatus(CONNECTION_STATE.FAILED);
+          clearInterval(statsIntervalRef.current);
+          break;
+        case 'disconnected':
+          setConnectionStatus(CONNECTION_STATE.DISCONNECTED);
+          clearInterval(statsIntervalRef.current);
+          break;
+        default:
+          break;
+      }
+    };
+
+    pc.onnegotiationneeded = async () => {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        // Signal the offer through the established signaling channel
+        onIceCandidate({ type: 'offer', offer: pc.localDescription });
+      } catch (error) {
+        console.error('Error during negotiation:', error);
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') {
+        // Attempt to restart ICE
+        pc.restartIce();
+      }
     };
 
     if (localStream) {
@@ -35,7 +115,7 @@ export const useWebRTC = (localStream, onRemoteStream) => {
 
     peerConnectionRef.current = pc;
     return pc;
-  }, [localStream, onRemoteStream]);
+  }, [localStream, onRemoteStream, monitorConnectionStats]);
 
   const handleOffer = useCallback(async (offer, onAnswer) => {
     try {
@@ -48,6 +128,8 @@ export const useWebRTC = (localStream, onRemoteStream) => {
       onAnswer({ type: 'answer', answer });
     } catch (error) {
       console.error('Error handling offer:', error);
+      setConnectionStatus(CONNECTION_STATE.FAILED);
+      throw new Error(`Failed to handle offer: ${error.message}`);
     }
   }, [createPeerConnection]);
 
@@ -61,6 +143,8 @@ export const useWebRTC = (localStream, onRemoteStream) => {
       onSignal({ type: 'offer', offer });
     } catch (error) {
       console.error('Error initiating call:', error);
+      setConnectionStatus(CONNECTION_STATE.FAILED);
+      throw new Error(`Failed to initiate call: ${error.message}`);
     }
   }, [createPeerConnection]);
 
@@ -73,34 +157,45 @@ export const useWebRTC = (localStream, onRemoteStream) => {
       }
     } catch (error) {
       console.error('Error handling answer:', error);
+      setConnectionStatus(CONNECTION_STATE.FAILED);
+      throw new Error(`Failed to handle answer: ${error.message}`);
     }
   }, []);
 
   const handleIceCandidate = useCallback(async (candidate) => {
     try {
-      if (peerConnectionRef.current) {
+      if (peerConnectionRef.current && peerConnectionRef.current.remoteDescription) {
         await peerConnectionRef.current.addIceCandidate(
           new RTCIceCandidate(candidate)
         );
       }
     } catch (error) {
       console.error('Error handling ICE candidate:', error);
+      // Don't set failed state for individual ICE candidate failures
     }
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close();
-        peerConnectionRef.current = null;
-      }
-    };
+  const cleanup = useCallback(() => {
+    clearInterval(statsIntervalRef.current);
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    setConnectionStatus(CONNECTION_STATE.DISCONNECTED);
+    setStats(null);
   }, []);
+
+  useEffect(() => {
+    return cleanup;
+  }, [cleanup]);
 
   return {
     initiateCall,
     handleOffer,
     handleAnswer,
     handleIceCandidate,
+    connectionStatus,
+    stats,
+    cleanup,
   };
 };

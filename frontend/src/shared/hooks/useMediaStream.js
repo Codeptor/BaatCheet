@@ -5,27 +5,80 @@ export const useMediaStream = () => {
   const [localStream, setLocalStream] = useState(null);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
+  const [error, setError] = useState(null);
+  const [devices, setDevices] = useState({ audio: [], video: [] });
   const streamRef = useRef(null);
 
-  useEffect(() => {
-    const initStream = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS);
-        setLocalStream(stream);
-        streamRef.current = stream;
-      } catch (error) {
-        console.error('Error accessing media devices:', error);
-      }
-    };
+  const getDevices = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setDevices({
+        audio: devices.filter(device => device.kind === 'audioinput'),
+        video: devices.filter(device => device.kind === 'videoinput'),
+      });
+    } catch (err) {
+      console.error('Error getting devices:', err);
+      setError('Failed to get media devices');
+    }
+  }, []);
 
-    initStream();
-
-    return () => {
+  const initStream = useCallback(async (constraints = MEDIA_CONSTRAINTS) => {
+    try {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
-    };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setLocalStream(stream);
+      streamRef.current = stream;
+      setError(null);
+      
+      // Reset enabled states based on actual tracks
+      const hasAudioTrack = stream.getAudioTracks().length > 0;
+      const hasVideoTrack = stream.getVideoTracks().length > 0;
+      setIsAudioEnabled(hasAudioTrack);
+      setIsVideoEnabled(hasVideoTrack);
+
+      return stream;
+    } catch (err) {
+      console.error('Error accessing media devices:', err);
+      setError(err.message);
+      
+      // Try fallback to audio-only if video fails
+      if (constraints.video && err.name === 'NotAllowedError') {
+        try {
+          const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: constraints.audio,
+            video: false 
+          });
+          setLocalStream(audioOnlyStream);
+          streamRef.current = audioOnlyStream;
+          setIsVideoEnabled(false);
+          setError('Video access denied, using audio only');
+          return audioOnlyStream;
+        } catch (audioErr) {
+          setError('Failed to access both audio and video');
+          throw audioErr;
+        }
+      }
+      throw err;
+    }
   }, []);
+
+  const switchDevice = useCallback(async (deviceId, kind) => {
+    try {
+      const newConstraints = { ...MEDIA_CONSTRAINTS };
+      if (kind === 'audioinput') {
+        newConstraints.audio = { ...newConstraints.audio, deviceId };
+      } else if (kind === 'videoinput') {
+        newConstraints.video = { ...newConstraints.video, deviceId };
+      }
+      await initStream(newConstraints);
+    } catch (err) {
+      console.error('Error switching device:', err);
+      setError(`Failed to switch ${kind}`);
+    }
+  }, [initStream]);
 
   const toggleAudio = useCallback(() => {
     if (localStream) {
@@ -47,11 +100,34 @@ export const useMediaStream = () => {
     }
   }, [localStream]);
 
+  useEffect(() => {
+    getDevices();
+    initStream();
+
+    // Handle device changes
+    const handleDeviceChange = () => {
+      getDevices();
+    };
+
+    navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+    };
+  }, [getDevices, initStream]);
+
   return {
     localStream,
     isAudioEnabled,
     isVideoEnabled,
+    error,
+    devices,
     toggleAudio,
     toggleVideo,
+    switchDevice,
+    reinitializeStream: initStream,
   };
 };
