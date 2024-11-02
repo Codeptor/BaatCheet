@@ -72,7 +72,6 @@ export const useWebRTC = (localStream, onRemoteStream) => {
         case 'connected':
         case 'completed':
           setConnectionStatus(CONNECTION_STATE.CONNECTED);
-          // Start monitoring stats when connected
           clearInterval(statsIntervalRef.current);
           statsIntervalRef.current = setInterval(() => monitorConnectionStats(pc), 1000);
           break;
@@ -93,7 +92,6 @@ export const useWebRTC = (localStream, onRemoteStream) => {
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        // Signal the offer through the established signaling channel
         onIceCandidate({ type: 'offer', offer: pc.localDescription });
       } catch (error) {
         console.error('Error during negotiation:', error);
@@ -102,7 +100,6 @@ export const useWebRTC = (localStream, onRemoteStream) => {
 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed') {
-        // Attempt to restart ICE
         pc.restartIce();
       }
     };
@@ -171,7 +168,6 @@ export const useWebRTC = (localStream, onRemoteStream) => {
       }
     } catch (error) {
       console.error('Error handling ICE candidate:', error);
-      // Don't set failed state for individual ICE candidate failures
     }
   }, []);
 

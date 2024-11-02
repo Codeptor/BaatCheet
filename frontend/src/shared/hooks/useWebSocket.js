@@ -27,12 +27,11 @@ export const useWebSocket = (roomId, onMessage) => {
   }, []);
 
   const getReconnectDelay = useCallback(() => {
-    // Exponential backoff with jitter
     const delay = Math.min(
       INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current),
       MAX_RECONNECT_DELAY
     );
-    return delay + Math.random() * 1000; // Add jitter
+    return delay + Math.random() * 1000;
   }, []);
 
   const sendHeartbeat = useCallback(() => {
@@ -65,10 +64,8 @@ export const useWebSocket = (roomId, onMessage) => {
         reconnectAttemptsRef.current = 0;
         clearTimers();
 
-        // Start heartbeat
         heartbeatIntervalRef.current = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
 
-        // Process any queued messages
         processMessageQueue();
       };
 
@@ -76,7 +73,7 @@ export const useWebSocket = (roomId, onMessage) => {
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'heartbeat-ack') {
-            return; // Ignore heartbeat acknowledgments
+            return;
           }
           onMessage(data);
         } catch (error) {
@@ -97,7 +94,6 @@ export const useWebSocket = (roomId, onMessage) => {
         setConnectionState('disconnected');
         clearTimers();
 
-        // Attempt to reconnect if not closed intentionally
         if (event.code !== 1000 && reconnectAttemptsRef.current < RECONNECT_ATTEMPTS) {
           reconnectAttemptsRef.current++;
           const delay = getReconnectDelay();

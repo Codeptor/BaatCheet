@@ -33,7 +33,6 @@ export const useMediaStream = () => {
       streamRef.current = stream;
       setError(null);
       
-      // Reset enabled states based on actual tracks
       const hasAudioTrack = stream.getAudioTracks().length > 0;
       const hasVideoTrack = stream.getVideoTracks().length > 0;
       setIsAudioEnabled(hasAudioTrack);
@@ -44,7 +43,6 @@ export const useMediaStream = () => {
       console.error('Error accessing media devices:', err);
       setError(err.message);
       
-      // Try fallback to audio-only if video fails
       if (constraints.video && err.name === 'NotAllowedError') {
         try {
           const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ 
@@ -104,7 +102,6 @@ export const useMediaStream = () => {
     getDevices();
     initStream();
 
-    // Handle device changes
     const handleDeviceChange = () => {
       getDevices();
     };
